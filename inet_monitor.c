@@ -6,8 +6,9 @@
 #include <asm/types.h>
 #include <sys/socket.h>
 #include <linux/netlink.h>
+#include <linux/rtnetlink.h>
 #include <netinet/in.h>
-
+#include <linux/tcp.h>
 #include <linux/sock_diag.h>
 #include <linux/inet_diag.h>
 
@@ -34,8 +35,9 @@ int send_diag_msg(int sockfd){
     //definitions
     conn_req.idiag_states = 0xFFFF;
 
-    //ext is a bitmask containing which extensions I might be interested in (I
-    //guess?)
+    //I want the TCP information
+    //ext is a bitmask containing the extensions I want to acquire
+    conn_req.idiag_ext |= (1 << (INET_DIAG_INFO - 1));
 
     //Interested in all connections
     
@@ -64,13 +66,12 @@ int send_diag_msg(int sockfd){
 }
 
 int main(int argc, char *argv[]){
-    int nl_sock = 0, numbytes = 0;
-    struct nlmsghdr *nlh_reply;
-    struct inet_diag_req_v2 *conn_reply;
-    struct msghdr msg;
-    struct iovec iov;
-
+    int nl_sock = 0, numbytes = 0, rtalen=0;
+    struct nlmsghdr *nlh;
     uint8_t recv_buf[SOCKET_BUFFER_SIZE];
+    struct inet_diag_msg *diag_msg;
+    struct rtattr *attr;
+    struct tcp_info *tcpi;
 
     //Create the monitoring socket
     if((nl_sock = socket(AF_NETLINK, SOCK_DGRAM, NETLINK_INET_DIAG)) == -1){
@@ -83,26 +84,37 @@ int main(int argc, char *argv[]){
         return EXIT_FAILURE;
     }
 
-    iov.iov_base = recv_buf;
-    iov.iov_len = sizeof(recv_buf);
-    memset(&msg, 0, sizeof(msg));
-    msg.msg_iov = &iov;
-    msg.msg_iovlen = 1;
-
     while(1){
-        numbytes = recvmsg(nl_sock, &msg, 0);
-        fprintf(stderr, "Received %d bytes\n", numbytes);
-        nlh_reply = (struct nlmsghdr*) recv_buf;
+        numbytes = recv(nl_sock, recv_buf, sizeof(recv_buf), 0);
+        nlh = (struct nlmsghdr*) recv_buf;
 
-        while(NLMSG_OK(nlh_reply, numbytes)){
-            if(nlh_reply->nlmsg_type == NLMSG_DONE)
+        while(NLMSG_OK(nlh, numbytes)){
+            if(nlh->nlmsg_type == NLMSG_DONE)
                 return;
 
-            fprintf(stderr, "Message\n");
-            nlh_reply = NLMSG_NEXT(nlh_reply, numbytes); 
+            diag_msg = (struct inet_diag_msg*) NLMSG_DATA(nlh);
+
+            rtalen = nlh->nlmsg_len - NLMSG_LENGTH(sizeof(*diag_msg));
+            if(rtalen > 0){
+                attr = (struct rtattr*) (diag_msg+1);
+
+                //printf("Length: %d %u\n", attr->rta_len, sizeof(struct rtattr));
+                while(RTA_OK(attr, rtalen)){
+                    if(attr->rta_type == INET_DIAG_INFO){
+                        tcpi = (struct tcp_info*) RTA_DATA(attr); 
+
+                        //Convert from usec to MS
+                        if(tcpi->tcpi_rto && (tcpi->tcpi_rto / 1000) > 480)
+                            printf("RTO: %g\n", (double) tcpi->tcpi_rto/1000);
+                    }
+                    attr = RTA_NEXT(attr, rtalen); 
+                }
+            }
+
+            nlh = NLMSG_NEXT(nlh, numbytes); 
         }
-        //fprintf(stderr, "Type %u Error %d\n", req.nlh.nlmsg_type, NLMSG_DONE);
     }
+
 
     return EXIT_SUCCESS;
 }
