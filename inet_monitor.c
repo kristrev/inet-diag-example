@@ -41,18 +41,28 @@ int send_diag_msg(int sockfd){
     struct nlmsghdr nlh;
     struct inet_diag_req_v2 conn_req;
     struct sockaddr_nl sa;
-    struct iovec iov[2];
+    struct iovec iov[4];
+
+    //For the filter
+    struct rtattr rta;
+    void *filter_mem = NULL;
+    struct inet_diag_bc_op *bc_op = NULL;
+    int i;
 
     memset(&msg, 0, sizeof(msg));
     memset(&sa, 0, sizeof(sa));
     memset(&nlh, 0, sizeof(nlh));
     memset(&conn_req, 0, sizeof(conn_req));
 
-    //NOTE: Bytecode is an nlattr for the request
+    //No need to specify groups or pid. This message only has one receiver and
+    //pid 0 is kernel
+    sa.nl_family = AF_NETLINK;
+
+    //Address family and protocol I am interested in
     conn_req.sdiag_family = AF_INET;
     conn_req.sdiag_protocol = IPPROTO_TCP;
 
-    //Filter out some states
+    //Filter out some states, to show how it is done
     conn_req.idiag_states = TCPF_ALL & 
         ~(TCPF_SYN_RECV | TCPF_TIME_WAIT | TCPF_CLOSE);
 
@@ -61,25 +71,52 @@ int send_diag_msg(int sockfd){
     conn_req.idiag_ext |= (1 << (INET_DIAG_INFO - 1));
     
     nlh.nlmsg_len = NLMSG_LENGTH(sizeof(conn_req));
+    //TODO: NLM_F_DUMP
     nlh.nlmsg_flags = NLM_F_ROOT | NLM_F_MATCH | NLM_F_REQUEST;
 
     //Avoid using compat by specifying family + protocol in header
     nlh.nlmsg_type = SOCK_DIAG_BY_FAMILY;
-
     iov[0].iov_base = (void*) &nlh;
     iov[0].iov_len = sizeof(nlh);
     iov[1].iov_base = (void*) &conn_req;
     iov[1].iov_len = sizeof(conn_req);
 
-    //No need to specify groups or pid. This message only has one receiver and
-    //pid 0 is kernel
-    sa.nl_family = AF_NETLINK;
+    //Add a very simple filter for port checking, check if port is <= 80
+    //Port checking assumes that the port to check for is stored in a second
+    //inet_diag_bc_op
+   
+    //The easies way to understand filters, is to look at how the kernel
+    //processes them. This is done in the function inet_diag_bc_run in
+    //inet_diag.c. The yes/no contains offsets to the next condition or aborts
+    //the loop by making the variable len in inet_diag_bc_run() negative. There
+    //are some limitations to the yes/no values, see inet_diag_bc_audit
+    memset(&rta, 0, sizeof(rta));
+    filter_mem = calloc(sizeof(struct inet_diag_bc_op)*2, 1);
+    bc_op = (struct inet_diag_bc_op*) filter_mem; 
+    bc_op->code = INET_DIAG_BC_D_LE;
+    bc_op->yes = sizeof(struct inet_diag_bc_op)*2;
+    //Only way to stop loop is to make len negative
+    bc_op->no = 12;
+    bc_op = bc_op+1;
+    bc_op->no = 1000;
+    rta.rta_type = INET_DIAG_REQ_BYTECODE;
+    rta.rta_len = RTA_LENGTH(sizeof(struct inet_diag_bc_op)*2);
+    iov[2] = (struct iovec){&rta, sizeof(rta)};
+    iov[3] = (struct iovec){filter_mem, sizeof(struct inet_diag_bc_op)*2};
+    nlh.nlmsg_len += rta.rta_len;
+   
+    for(i=0; i<8; i++)
+        printf("%x ", *(((uint8_t*) filter_mem) + i));
+    printf("\n");
 
     //Set essage correctly
     msg.msg_name = (void*) &sa;
     msg.msg_namelen = sizeof(sa);
     msg.msg_iov = iov;
-    msg.msg_iovlen = 2;
+    if(filter_mem == NULL)
+        msg.msg_iovlen = 2;
+    else
+        msg.msg_iovlen = 4;
    
     return sendmsg(sockfd, &msg, 0);
 }
@@ -169,7 +206,12 @@ int main(int argc, char *argv[]){
 
         while(NLMSG_OK(nlh, numbytes)){
             if(nlh->nlmsg_type == NLMSG_DONE)
+                return EXIT_SUCCESS;
+
+            if(nlh->nlmsg_type == NLMSG_ERROR){
+                fprintf(stderr, "Error in netlink message\n");
                 return EXIT_FAILURE;
+            }
 
             diag_msg = (struct inet_diag_msg*) NLMSG_DATA(nlh);
             rtalen = nlh->nlmsg_len - NLMSG_LENGTH(sizeof(*diag_msg));
