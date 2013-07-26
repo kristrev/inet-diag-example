@@ -12,6 +12,7 @@
 #include <linux/sock_diag.h>
 #include <linux/inet_diag.h>
 #include <arpa/inet.h>
+#include <pwd.h>
 
 //Kernel TCP states. /include/net/tcp_states.h
 enum{
@@ -51,9 +52,9 @@ int send_diag_msg(int sockfd){
     conn_req.sdiag_family = AF_INET;
     conn_req.sdiag_protocol = IPPROTO_TCP;
 
-    //Filter out some states, show most relevant states for a client machine
+    //Filter out some states
     conn_req.idiag_states = TCPF_ALL & 
-        ~(TCPF_SYN_RECV | TCPF_TIME_WAIT | TCPF_CLOSE | TCPF_LISTEN);
+        ~(TCPF_SYN_RECV | TCPF_TIME_WAIT | TCPF_CLOSE);
 
     //Request extended TCP information (it is the tcp_info struct)
     //ext is a bitmask containing the extensions I want to acquire
@@ -89,9 +90,13 @@ void parse_diag_msg(struct inet_diag_msg *diag_msg, int rtalen){
     //In preparation of IPv6 support
     char local_addr_buf[INET6_ADDRSTRLEN];
     char remote_addr_buf[INET6_ADDRSTRLEN];
+    struct passwd *uid_info = NULL;
 
     memset(local_addr_buf, 0, sizeof(local_addr_buf));
     memset(remote_addr_buf, 0, sizeof(remote_addr_buf));
+
+    //(Try to) Get user info
+    uid_info = getpwuid(diag_msg->idiag_uid);
 
     if(diag_msg->idiag_family == AF_INET){
         inet_ntop(AF_INET, (struct in_addr*) &(diag_msg->id.idiag_src), 
@@ -112,7 +117,9 @@ void parse_diag_msg(struct inet_diag_msg *diag_msg, int rtalen){
         fprintf(stderr, "Could not get required connection information\n");
         return;
     } else {
-        fprintf(stdout, "User %u Src: %s:%d Dst: %s:%d\n", diag_msg->idiag_uid,
+        fprintf(stdout, "User: %s (UID: %u) Src: %s:%d Dst: %s:%d\n", 
+                uid_info == NULL ? "Not found" : uid_info->pw_name,
+                diag_msg->idiag_uid,
                 local_addr_buf, ntohs(diag_msg->id.idiag_sport), 
                 remote_addr_buf, ntohs(diag_msg->id.idiag_dport));
     }
