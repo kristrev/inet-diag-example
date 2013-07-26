@@ -36,18 +36,45 @@ enum{
 //Copied from libmnl source
 #define SOCKET_BUFFER_SIZE (getpagesize() < 8192L ? getpagesize() : 8192L)
 
+//Example of diag_filtering, checks if destination port is <= 1000
+//
+//The easies way to understand filters, is to look at how the kernel
+//processes them. This is done in the function inet_diag_bc_run() in
+//inet_diag.c. The yes/no contains offsets to the next condition or aborts
+//the loop by making the variable len in inet_diag_bc_run() negative. There
+//are some limitations to the yes/no values, see inet_diag_bc_audit();
+unsigned char create_filter(void **filter_mem){
+    struct inet_diag_bc_op *bc_op = NULL;
+    unsigned char filter_len = sizeof(struct inet_diag_bc_op)*2;
+    if((*filter_mem = calloc(filter_len, 1)) == NULL)
+        return 0;
+
+    bc_op = (struct inet_diag_bc_op*) *filter_mem; 
+    bc_op->code = INET_DIAG_BC_D_LE;
+    bc_op->yes = sizeof(struct inet_diag_bc_op)*2;
+    //Only way to stop loop is to make len negative
+    bc_op->no = 12;
+
+    //For a port check, the port to check for is stored in the no field of a
+    //follow-up bc_op-struct.
+    bc_op = bc_op+1;
+    bc_op->no = 1000;
+
+    return filter_len;
+}
+
 int send_diag_msg(int sockfd){
     struct msghdr msg;
     struct nlmsghdr nlh;
     struct inet_diag_req_v2 conn_req;
     struct sockaddr_nl sa;
     struct iovec iov[4];
+    int retval = 0;
 
     //For the filter
     struct rtattr rta;
     void *filter_mem = NULL;
-    struct inet_diag_bc_op *bc_op = NULL;
-    int i;
+    int filter_len = 0;
 
     memset(&msg, 0, sizeof(msg));
     memset(&sa, 0, sizeof(sa));
@@ -58,7 +85,10 @@ int send_diag_msg(int sockfd){
     //pid 0 is kernel
     sa.nl_family = AF_NETLINK;
 
-    //Address family and protocol I am interested in
+    //Address family and protocol we are interested in. sock_diag can also be 
+    //used with UDP sockets, DCCP sockets and Unix sockets, to mention a few.
+    //This example requests information about TCP sockets bound to IPv4
+    //addresses.
     conn_req.sdiag_family = AF_INET;
     conn_req.sdiag_protocol = IPPROTO_TCP;
 
@@ -67,12 +97,13 @@ int send_diag_msg(int sockfd){
         ~(TCPF_SYN_RECV | TCPF_TIME_WAIT | TCPF_CLOSE);
 
     //Request extended TCP information (it is the tcp_info struct)
-    //ext is a bitmask containing the extensions I want to acquire
+    //ext is a bitmask containing the extensions I want to acquire. The values
+    //are defined in inet_diag.h (the INET_DIAG_*-constants).
     conn_req.idiag_ext |= (1 << (INET_DIAG_INFO - 1));
     
     nlh.nlmsg_len = NLMSG_LENGTH(sizeof(conn_req));
     //TODO: NLM_F_DUMP
-    nlh.nlmsg_flags = NLM_F_ROOT | NLM_F_MATCH | NLM_F_REQUEST;
+    nlh.nlmsg_flags = NLM_F_DUMP | NLM_F_REQUEST;
 
     //Avoid using compat by specifying family + protocol in header
     nlh.nlmsg_type = SOCK_DIAG_BY_FAMILY;
@@ -81,33 +112,17 @@ int send_diag_msg(int sockfd){
     iov[1].iov_base = (void*) &conn_req;
     iov[1].iov_len = sizeof(conn_req);
 
-    //Add a very simple filter for port checking, check if port is <= 80
-    //Port checking assumes that the port to check for is stored in a second
-    //inet_diag_bc_op
-   
-    //The easies way to understand filters, is to look at how the kernel
-    //processes them. This is done in the function inet_diag_bc_run in
-    //inet_diag.c. The yes/no contains offsets to the next condition or aborts
-    //the loop by making the variable len in inet_diag_bc_run() negative. There
-    //are some limitations to the yes/no values, see inet_diag_bc_audit
-    memset(&rta, 0, sizeof(rta));
-    filter_mem = calloc(sizeof(struct inet_diag_bc_op)*2, 1);
-    bc_op = (struct inet_diag_bc_op*) filter_mem; 
-    bc_op->code = INET_DIAG_BC_D_LE;
-    bc_op->yes = sizeof(struct inet_diag_bc_op)*2;
-    //Only way to stop loop is to make len negative
-    bc_op->no = 12;
-    bc_op = bc_op+1;
-    bc_op->no = 1000;
-    rta.rta_type = INET_DIAG_REQ_BYTECODE;
-    rta.rta_len = RTA_LENGTH(sizeof(struct inet_diag_bc_op)*2);
-    iov[2] = (struct iovec){&rta, sizeof(rta)};
-    iov[3] = (struct iovec){filter_mem, sizeof(struct inet_diag_bc_op)*2};
-    nlh.nlmsg_len += rta.rta_len;
-   
-    for(i=0; i<8; i++)
-        printf("%x ", *(((uint8_t*) filter_mem) + i));
-    printf("\n");
+    //Remove the if 0 to test the filter
+#if 0
+    if((filter_len = create_filter(&filter_mem)) > 0){
+        memset(&rta, 0, sizeof(rta));
+        rta.rta_type = INET_DIAG_REQ_BYTECODE;
+        rta.rta_len = RTA_LENGTH(filter_len);
+        iov[2] = (struct iovec){&rta, sizeof(rta)};
+        iov[3] = (struct iovec){filter_mem, filter_len};
+        nlh.nlmsg_len += rta.rta_len;
+    }
+#endif
 
     //Set essage correctly
     msg.msg_name = (void*) &sa;
@@ -118,13 +133,17 @@ int send_diag_msg(int sockfd){
     else
         msg.msg_iovlen = 4;
    
-    return sendmsg(sockfd, &msg, 0);
+    retval = sendmsg(sockfd, &msg, 0);
+
+    if(filter_mem != NULL)
+        free(filter_mem);
+
+    return retval;
 }
 
 void parse_diag_msg(struct inet_diag_msg *diag_msg, int rtalen){
     struct rtattr *attr;
     struct tcp_info *tcpi;
-    //In preparation of IPv6 support
     char local_addr_buf[INET6_ADDRSTRLEN];
     char remote_addr_buf[INET6_ADDRSTRLEN];
     struct passwd *uid_info = NULL;
@@ -161,12 +180,15 @@ void parse_diag_msg(struct inet_diag_msg *diag_msg, int rtalen){
                 remote_addr_buf, ntohs(diag_msg->id.idiag_dport));
     }
 
+    //Parse the attributes of the netlink message in search of the
+    //INET_DIAG_INFO-attribute
     if(rtalen > 0){
         attr = (struct rtattr*) (diag_msg+1);
 
-        //printf("Length: %d %u\n", attr->rta_len, sizeof(struct rtattr));
         while(RTA_OK(attr, rtalen)){
             if(attr->rta_type == INET_DIAG_INFO){
+                //The payload of this attribute is a tcp_info-struct, so it is
+                //ok to cast
                 tcpi = (struct tcp_info*) RTA_DATA(attr);
 
                 //Output some sample data
@@ -195,11 +217,15 @@ int main(int argc, char *argv[]){
         return EXIT_FAILURE;
     }
 
+    //Send the request for the sockets we are interested in
     if(send_diag_msg(nl_sock) < 0){
         perror("sendmsg: ");
         return EXIT_FAILURE;
     }
 
+    //The requests can (will in most cases) come as multiple netlink messages. I
+    //need to receive all of them. Assumes no packet loss, so if the last packet
+    //(the packet with NLMSG_DONE) is lost, the application will hang.
     while(1){
         numbytes = recv(nl_sock, recv_buf, sizeof(recv_buf), 0);
         nlh = (struct nlmsghdr*) recv_buf;
