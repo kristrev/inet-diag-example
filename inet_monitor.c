@@ -112,7 +112,7 @@ void parse_diag_msg(struct inet_diag_msg *diag_msg, int rtalen){
         fprintf(stderr, "Could not get required connection information\n");
         return;
     } else {
-        fprintf(stdout, "Src: %s:%d Dst: %s:%d\n", 
+        fprintf(stdout, "User %u Src: %s:%d Dst: %s:%d\n", diag_msg->idiag_uid,
                 local_addr_buf, ntohs(diag_msg->id.idiag_sport), 
                 remote_addr_buf, ntohs(diag_msg->id.idiag_dport));
     }
