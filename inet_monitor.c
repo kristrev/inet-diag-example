@@ -109,8 +109,8 @@ int send_diag_msg(int sockfd){
     nlh.nlmsg_flags = NLM_F_DUMP | NLM_F_REQUEST;
 
     //Example of how to only match some sockets
-    //nlh.nlmsg_flags = NLM_F_MATCH | NLM_F_REQUEST;
-    //conn_req.id.idiag_dport=htons(443);
+    nlh.nlmsg_flags = NLM_F_MATCH | NLM_F_REQUEST;
+    conn_req.id.idiag_dport=htons(443);
 
     //Avoid using compat by specifying family + protocol in header
     nlh.nlmsg_type = SOCK_DIAG_BY_FAMILY;
