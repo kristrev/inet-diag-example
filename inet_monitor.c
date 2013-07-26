@@ -66,6 +66,8 @@ unsigned char create_filter(void **filter_mem){
 int send_diag_msg(int sockfd){
     struct msghdr msg;
     struct nlmsghdr nlh;
+    //To request information about unix sockets, this would be replaced with
+    //unix_diag_req, packet-sockets packet_diag_req.
     struct inet_diag_req_v2 conn_req;
     struct sockaddr_nl sa;
     struct iovec iov[4];
@@ -102,8 +104,13 @@ int send_diag_msg(int sockfd){
     conn_req.idiag_ext |= (1 << (INET_DIAG_INFO - 1));
     
     nlh.nlmsg_len = NLMSG_LENGTH(sizeof(conn_req));
-    //TODO: NLM_F_DUMP
+    //In order to request a socket bound to a specific IP/port, remove
+    //NLM_F_DUMP and specify the required information in conn_req.id
     nlh.nlmsg_flags = NLM_F_DUMP | NLM_F_REQUEST;
+
+    //Example of how to only match some sockets
+    //nlh.nlmsg_flags = NLM_F_MATCH | NLM_F_REQUEST;
+    //conn_req.id.idiag_dport=htons(443);
 
     //Avoid using compat by specifying family + protocol in header
     nlh.nlmsg_type = SOCK_DIAG_BY_FAMILY;
