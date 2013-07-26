@@ -109,7 +109,8 @@ int send_diag_msg(int sockfd){
     nlh.nlmsg_flags = NLM_F_DUMP | NLM_F_REQUEST;
 
     //Example of how to only match some sockets
-    //nlh.nlmsg_flags = NLM_F_MATCH | NLM_F_REQUEST;
+    //In order to match a single socket, I have to provide all fields
+    //sport/dport, saddr/daddr (look at dump_on_icsk)
     //conn_req.id.idiag_dport=htons(443);
 
     //Avoid using compat by specifying family + protocol in header
