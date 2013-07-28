@@ -16,17 +16,31 @@
 
 //Kernel TCP states. /include/net/tcp_states.h
 enum{
-    TCPF_ESTABLISHED = (1 << 1),
-    TCPF_SYN_SENT    = (1 << 2),
-    TCPF_SYN_RECV    = (1 << 3),
-    TCPF_FIN_WAIT1   = (1 << 4),
-    TCPF_FIN_WAIT2   = (1 << 5),
-    TCPF_TIME_WAIT   = (1 << 6),
-    TCPF_CLOSE       = (1 << 7),
-    TCPF_CLOSE_WAIT  = (1 << 8),
-    TCPF_LAST_ACK    = (1 << 9),
-    TCPF_LISTEN      = (1 << 10),
-    TCPF_CLOSING     = (1 << 11) 
+    TCP_ESTABLISHED = 1,
+    TCP_SYN_SENT,
+    TCP_SYN_RECV,
+    TCP_FIN_WAIT1,
+    TCP_FIN_WAIT2,
+    TCP_TIME_WAIT,
+    TCP_CLOSE,
+    TCP_CLOSE_WAIT,
+    TCP_LAST_ACK,
+    TCP_LISTEN,
+    TCP_CLOSING 
+};
+
+static const char* tcp_states_map[]={
+    [TCP_ESTABLISHED] = "ESTABLISHED",
+    [TCP_SYN_SENT] = "SYN-SENT",
+    [TCP_SYN_RECV] = "SYN-RECV",
+    [TCP_FIN_WAIT1] = "FIN-WAIT-1",
+    [TCP_FIN_WAIT2] = "FIN-WAIT-2",
+    [TCP_TIME_WAIT] = "TIME-WAIT",
+    [TCP_CLOSE] = "CLOSE",
+    [TCP_CLOSE_WAIT] = "CLOSE-WAIT",
+    [TCP_LAST_ACK] = "LAST-ACK",
+    [TCP_LISTEN] = "LISTEN",
+    [TCP_CLOSING] = "CLOSING"
 };
 
 //There are currently 11 states, but the first state is stored in pos. 1.
@@ -96,7 +110,7 @@ int send_diag_msg(int sockfd){
 
     //Filter out some states, to show how it is done
     conn_req.idiag_states = TCPF_ALL & 
-        ~(TCPF_SYN_RECV | TCPF_TIME_WAIT | TCPF_CLOSE);
+        ~((1<<TCP_SYN_RECV) | (1<<TCP_TIME_WAIT) | (1<<TCP_CLOSE));
 
     //Request extended TCP information (it is the tcp_info struct)
     //ext is a bitmask containing the extensions I want to acquire. The values
@@ -200,8 +214,9 @@ void parse_diag_msg(struct inet_diag_msg *diag_msg, int rtalen){
                 tcpi = (struct tcp_info*) RTA_DATA(attr);
 
                 //Output some sample data
-                fprintf(stdout, "\tRTT: %gms (var. %gms) Recv. RTT: %gms "
-                        "Snd_cwnd: %u/%u\n",
+                fprintf(stdout, "\tState: %s RTT: %gms (var. %gms) "
+                        "Recv. RTT: %gms Snd_cwnd: %u/%u\n",
+                        tcp_states_map[tcpi->tcpi_state],
                         (double) tcpi->tcpi_rtt/1000, 
                         (double) tcpi->tcpi_rttvar/1000,
                         (double) tcpi->tcpi_rcv_rtt/1000, 
