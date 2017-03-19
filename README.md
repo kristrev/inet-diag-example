@@ -15,4 +15,4 @@ Combined with a lack of INET\_DIAG-documentation (the kernel source is your
 friend), I decided to create a small, easy to follow example of how INET\_DIAG
 can be used to passively monitor sockets. A detailed description of the example
 is available
-[here](http://kristrev.github.io/2013/07/26/passive-monitoring-of-sockets-on-linux/).
+[here](http://kristrev.github.io/2013/07/26/passive-monitoring-of-sockets-on-linux).
