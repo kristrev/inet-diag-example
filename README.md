@@ -1,6 +1,8 @@
 inet-diag-example
 =================
 
+If you want to see a more complete example of how to use INET\_DIAG, check out [tcp_closer](https://github.com/kristrev/tcp_closer)
+
 For a project I was working on lately, I needed to passively monitor a large
 number of TCP sockets. One common way to do is to parse the output of /proc/tcp,
 but my goal was to create a "clean" solution and avoid for example text-parsing.
